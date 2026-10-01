@@ -37,19 +37,41 @@ test('health, OAuth metadata, and legal pages are public', async (t) => {
   for(const path of ['/privacy','/terms','/support'])assert.equal((await fetch(f.base+path)).status,200);
 });
 
-test('tools/list is open but tenant calls challenge with RFC 9728 metadata', async (t) => {
+test('#3556: tools/list requires a token like every other MCP method; a valid tenant call challenges with RFC 9728 metadata', async (t) => {
   const f=await fixture(); t.after(()=>f.server.close());
-  const listed=await rpc(f.base,{jsonrpc:'2.0',id:1,method:'tools/list',params:{}});
+  const anon=await rpc(f.base,{jsonrpc:'2.0',id:1,method:'tools/list',params:{}});
+  assert.equal(anon.status,401); assert.match(anon.wwwAuth,/oauth-protected-resource\/mcp/); assert.match(anon.wwwAuth,/team:read/);
+  const listed=await rpc(f.base,{jsonrpc:'2.0',id:1,method:'tools/list',params:{}},'alpha:all');
   assert.equal(listed.status,200); assert.equal(listed.body.result.tools.length,14);
   const deniedCall=await call(f.base,'team_list',{},null);
   assert.equal(deniedCall.status,401); assert.match(deniedCall.wwwAuth,/oauth-protected-resource\/mcp/); assert.match(deniedCall.wwwAuth,/team:read/);
 });
 
-test('legacy client-audience bearer tokens cannot access or mask discovery', async (t) => {
+test('#3556: initialize, ping, resources/list, and prompts/list all require a token too (no publicDiscovery bypass)', async (t) => {
+  const f=await fixture(); t.after(()=>f.server.close());
+  for(const method of ['initialize','ping','resources/list','prompts/list']){
+    const anon=await rpc(f.base,{jsonrpc:'2.0',id:1,method,params:{}});
+    assert.equal(anon.status,401,method); assert.match(anon.wwwAuth,/invalid_token/,method);
+  }
+});
+
+test('#3556: GET / and GET /mcp discovery payloads require a token; health, PRM, and legal pages stay public', async (t) => {
+  const f=await fixture(); t.after(()=>f.server.close());
+  for(const path of ['/','/mcp']){
+    const anon=await fetch(f.base+path);
+    assert.equal(anon.status,401,path); assert.match(anon.headers.get('www-authenticate'),/invalid_token/,path);
+    const authed=await fetch(f.base+path,{headers:{authorization:'Bearer alpha:all'}});
+    assert.equal(authed.status,200,path);
+    const body=await authed.json();
+    assert.equal(body.service,'ruflo-ai-team'); assert.deepEqual(body.scopes,['team:read','team:write','team:run']);
+  }
+});
+
+test('legacy client-audience bearer tokens are denied discovery and calls alike (no masking)', async (t) => {
   const f=await fixture(); t.after(()=>f.server.close());
   const listed=await rpc(f.base,{jsonrpc:'2.0',id:1,method:'tools/list',params:{}},'legacy:all');
-  assert.equal(listed.status,200);
-  assert.equal(listed.body.result.tools.length,14);
+  assert.equal(listed.status,401);
+  assert.match(listed.wwwAuth,/invalid_token/);
   const deniedCall=await call(f.base,'team_list',{},'legacy:all');
   assert.equal(deniedCall.status,401);
   assert.match(deniedCall.wwwAuth,/invalid_token/);
@@ -57,7 +79,7 @@ test('legacy client-audience bearer tokens cannot access or mask discovery', asy
 
 test('every tool has explicit annotations and no secret-bearing input field', async (t) => {
   const f=await fixture(); t.after(()=>f.server.close());
-  const listed=await rpc(f.base,{jsonrpc:'2.0',id:1,method:'tools/list',params:{}});
+  const listed=await rpc(f.base,{jsonrpc:'2.0',id:1,method:'tools/list',params:{}},'alpha:all');
   const names=listed.body.result.tools.map(x=>x.name).sort();
   assert.deepEqual(names,['evidence_export','memory_remember','memory_search','run_complete','run_create','task_create','task_list','task_update','team_board','team_create','team_get','team_list','team_templates_list','team_update']);
   for(const tool of listed.body.result.tools){
@@ -76,9 +98,12 @@ test('scope checks return HTTP 403 rather than model-level permission errors', a
 test('board resource is public but contains no tenant data; board tool remains scoped', async (t) => {
   const f=await fixture(); t.after(()=>f.server.close());
   const uri='ui://ruflo-ai-team/board-v4.html';
-  const listed=await rpc(f.base,{jsonrpc:'2.0',id:1,method:'tools/list',params:{}});
+  const listed=await rpc(f.base,{jsonrpc:'2.0',id:1,method:'tools/list',params:{}},'alpha:all');
   assert.equal(listed.body.result.tools.find(x=>x.name==='team_board')._meta.ui.resourceUri,uri);
   assert.deepEqual(listed.body.result.tools.filter(x=>x._meta?.ui?.resourceUri).map(x=>x.name),['team_board']);
+  // #3556: resources/read for the board UI SHELL stays anonymous on purpose —
+  // the pre-existing, narrower MCP-Apps widget-host exception, unaffected by
+  // this fix (it's boilerplate HTML, no tenant data, no tool metadata).
   const resource=await rpc(f.base,{jsonrpc:'2.0',id:2,method:'resources/read',params:{uri}});
   assert.equal(resource.status,200);
   assert.equal(resource.body.result.contents[0].mimeType,'text/html;profile=mcp-app');

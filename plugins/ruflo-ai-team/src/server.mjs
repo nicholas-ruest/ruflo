@@ -118,17 +118,30 @@ export async function createAiTeamService({ store, vectorMemory, verifyToken, po
     if(req.method==='GET'&&url.pathname==='/privacy')return res.writeHead(200,{'content-type':'text/html;charset=utf-8'}).end(privacyPage());
     if(req.method==='GET'&&url.pathname==='/terms')return res.writeHead(200,{'content-type':'text/html;charset=utf-8'}).end(termsPage());
     if(req.method==='GET'&&url.pathname==='/support')return res.writeHead(200,{'content-type':'text/html;charset=utf-8'}).end(supportPage());
-    if(req.method==='GET'&&(url.pathname==='/'||url.pathname==='/mcp'))return res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({service:'ruflo-ai-team',version:VERSION,endpoint:`${publicUrl}/mcp`,authentication:'oauth2',scopes:Object.values(SCOPES),resources:['ruv://team/templates']}));
+    if(req.method==='GET'&&(url.pathname==='/'||url.pathname==='/mcp')){
+      // #3556 / ADR-0005: this discovery payload describes the full tool
+      // surface (incl. team_create) — requires the same token as every other
+      // MCP method, same as the PRM at /.well-known/oauth-protected-resource
+      // stays public so a client still has somewhere to learn HOW to get one.
+      const discoveryAuth=await authenticate(req,authConfig,verifyToken);
+      if(discoveryAuth.mode!=='oauth')return res.writeHead(401,{'content-type':'application/json','www-authenticate':challengeHeader(metadataUrl,{error:discoveryAuth.error||'invalid_token',description:discoveryAuth.description||'OAuth authorization is required',scope:SCOPES.read})}).end(JSON.stringify({error:discoveryAuth.error||'invalid_token'}));
+      return res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({service:'ruflo-ai-team',version:VERSION,endpoint:`${publicUrl}/mcp`,authentication:'oauth2',scopes:Object.values(SCOPES),resources:['ruv://team/templates']}));
+    }
     if(url.pathname!=='/mcp'||req.method!=='POST')return res.writeHead(404).end('not found');
     let parsed; try{parsed=JSON.parse(await readBody(req)||'{}');}catch{return res.writeHead(400,{'content-type':'application/json'}).end('{"error":"invalid_request"}');}
     const called=parsed?.method==='tools/call'?parsed?.params?.name:null;
+    // #3556 / ADR-0005: every MCP method requires a token — initialize, ping,
+    // tools/list, resources/list, and prompts/list used to be a public
+    // "publicDiscovery" bypass, which handed out the full tool surface
+    // (names, descriptions, JSON Schemas, annotations — including the
+    // team_create write tool) to any anonymous caller. The ONLY remaining
+    // exception is reading the static MCP-Apps board UI shell (boilerplate
+    // HTML, no tenant data, no tool metadata) — a narrower, pre-existing
+    // carve-out unrelated to this report, left untouched.
     const publicUiRead=parsed?.method==='resources/read'&&parsed?.params?.uri===TEAM_BOARD_URI;
-    const needsAuth=called||(parsed?.method==='resources/read'&&!publicUiRead);
-    // Discovery is public even when a client sends an expired or legacy-audience
-    // bearer. Never downgrade a protected call or an unknown method.
-    const publicDiscovery=new Set(['initialize','ping','tools/list','resources/list','prompts/list']);
+    const needsAuth=!publicUiRead;
     let auth=await authenticate(req,authConfig,verifyToken);
-    if(auth.mode==='denied'&&(publicDiscovery.has(parsed?.method)||publicUiRead))auth={mode:'anonymous',scopes:[]};
+    if(auth.mode==='denied'&&publicUiRead)auth={mode:'anonymous',scopes:[]};
     if(auth.mode==='denied')return res.writeHead(401,{'content-type':'application/json','www-authenticate':challengeHeader(metadataUrl,{error:auth.error,description:auth.description,scope:SCOPES.read})}).end(JSON.stringify({error:auth.error,error_description:auth.description}));
     if(needsAuth&&auth.mode!=='oauth'){const scope=called?TOOL_SCOPES[called]:SCOPES.read;return res.writeHead(401,{'content-type':'application/json','www-authenticate':challengeHeader(metadataUrl,{error:'invalid_token',description:'OAuth authorization is required for tenant data',scope})}).end(JSON.stringify({error:'invalid_token'}));}
     if(called&&TOOL_SCOPES[called]&&!hasScope(auth,TOOL_SCOPES[called]))return res.writeHead(403,{'content-type':'application/json','www-authenticate':challengeHeader(metadataUrl,{error:'insufficient_scope',description:`${TOOL_SCOPES[called]} is required`,scope:TOOL_SCOPES[called]})}).end(JSON.stringify({error:'insufficient_scope'}));

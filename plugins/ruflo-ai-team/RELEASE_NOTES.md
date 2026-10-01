@@ -1,3 +1,9 @@
+# 0.1.5 — Discovery methods require authentication (#3556)
+
+- `GET /`, `GET /mcp`, `initialize`, `ping`, `tools/list`, `resources/list`, and `prompts/list` previously answered anonymous callers with a `200` and full service/tool metadata (including the `team_create` write tool's schema), while `resources/read` and `tools/call` correctly returned `401`. Every MCP method now requires a valid OAuth token, matching the documented "401 unless authenticated" guarantee; see ADR-0005.
+- The one deliberate exception is unchanged: `resources/read` for the static MCP-Apps board UI shell (`ui://ruflo-ai-team/board-v4.html`) stays public — it is boilerplate HTML with no tenant data or tool metadata, not a discovery/listing bypass.
+- `/.well-known/oauth-protected-resource(/mcp)`, `/health`, `/privacy`, `/terms`, and `/support` remain intentionally public.
+
 # 0.1.4 — Larger, clickable workspace rail
 
 - Increased the outside gutter around the single ChatGPT workspace and enlarged the sidebar hit targets with hover/focus states.
