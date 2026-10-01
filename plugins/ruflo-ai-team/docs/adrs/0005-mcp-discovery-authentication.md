@@ -1,6 +1,22 @@
 # ADR-0005: MCP discovery methods require authentication
 
-Status: Proposed
+Status: Superseded — see note below. The decision recorded here (Option 1)
+was never merged; the maintainer shipped Option 2 directly, in commits
+`91d2033` ("fix(ai-team): explicit CORS allowlist and documented public
+discovery (#3556)") and `2578961` (version bump to 0.1.6), both on `main`
+as of 2026-09-30. Discovery (`initialize`, `ping`, `tools/list`,
+`prompts/list`, `resources/list`) stays intentionally anonymous; the actual
+fix replaces the wildcard CORS header with an explicit origin allowlist
+(`chatgpt.com`, `chat.openai.com`, `claude.ai`, or `ALLOWED_ORIGINS`) so
+only those origins — not arbitrary web pages — can read the discovery
+responses cross-origin, and documents which methods are public and why in
+the plugin README. `tools/call` and non-UI `resources/read` still require
+OAuth, unchanged.
+
+This record is kept for the design-option history (both options and their
+tradeoffs are still accurate reading), but the "Decision" section below
+does **not** reflect what shipped. Rationale for the option that did ship
+lives in the two commits above, not in this document.
 
 ## Context
 
